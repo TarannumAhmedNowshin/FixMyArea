@@ -62,6 +62,7 @@ def _asset(properties: dict[str, Any], latitude: Any, longitude: Any) -> dict[st
     }
 
 
+@lru_cache(maxsize=4)
 def load_streetlights(path: str | Path) -> list[dict[str, Any]]:
     """Load point assets from GeoJSON or a CSV with latitude/longitude columns."""
     source = Path(path)
@@ -81,6 +82,8 @@ def load_streetlights(path: str | Path) -> list[dict[str, Any]]:
             # GeoJSON coordinates are longitude, latitude (RFC 7946).
             item = _asset(properties, coordinates[1], coordinates[0])
             if item:
+                item["unit_no"] = _first(properties, ("unit_no", "unit number", "unit"))
+                item["unit_type"] = _first(properties, ("unit_type", "type"))
                 assets.append(item)
         return assets
 
@@ -191,6 +194,7 @@ def find_local_authority(
     return None
 
 
+@lru_cache(maxsize=4)
 def load_recycling_centres(path: str | Path) -> list[dict[str, Any]]:
     """Load DCC recycling-centre point locations from GeoJSON."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -212,6 +216,7 @@ def load_recycling_centres(path: str | Path) -> list[dict[str, Any]]:
             address=_first(properties, ("address",)),
             eircode=_first(properties, ("eircode",)),
             telephone=_first(properties, ("telephone", "phone")),
+            email=_first(properties, ("email",)),
             accepted_materials=["household electrical and electronic equipment (WEEE)"],
         )
         facilities.append(item)

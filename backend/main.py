@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -19,18 +23,24 @@ from .location import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env")
-
 app = FastAPI(title="FixMyArea API", version="0.1.0")
+frontend_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.environ.get("FRONTEND_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=list(dict.fromkeys([
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        *frontend_origins,
+    ])),
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
 DATA_PATH = Path(os.environ.get("FIXMYAREA_STREETLIGHTS", PROJECT_ROOT / "data/streetlights.geojson"))
-BOUNDARIES_PATH = Path(os.environ.get("FIXMYAREA_BOUNDARIES", PROJECT_ROOT / "data/dcc_admin_areas.geojson"))
+BOUNDARIES_PATH = Path(os.environ.get("FIXMYAREA_BOUNDARIES", PROJECT_ROOT / "data/dcc_5committeeareas_2019_2157.geojson"))
 FACILITIES_PATH = Path(os.environ.get("FIXMYAREA_FACILITIES", PROJECT_ROOT / "data/recycling-centers-dcc.geojson"))
 ROUTING_RULES_PATH = Path(os.environ.get("FIXMYAREA_ROUTING_RULES", PROJECT_ROOT / "data/routing_rules.json"))
 SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -87,7 +97,7 @@ async def analyse(
     try:
         classification = classify_image(image_bytes, content_type, description)
     except ClassificationError as error:
-        raise HTTPException(status_code=503 if "OPENAI_API_KEY" in str(error) else 502, detail=str(error))
+        raise HTTPException(status_code=503 if "not configured" in str(error) else 502, detail=str(error))
 
     result = {
         **classification,

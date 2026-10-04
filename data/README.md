@@ -29,8 +29,8 @@ Source: [Administrative Areas DCC](https://data.smartdublin.ie/dataset/administr
 
 ## Recycling-centre data
 
-`recycling-centers-dcc.geojson` contains the three DCC recycling-centre
-locations, addresses, and Eircodes. Dublin City Council's current WEEE guidance
+`recycling-centers-dcc.geojson` contains three DCC recycling-centre
+locations, addresses, Eircodes, telephone numbers, and email contacts. Dublin City Council's current WEEE guidance
 says household electrical and electronic equipment is accepted at these
 centres. Opening hours are not embedded in this dataset, so the app links to
 the Council's current information page instead of displaying hours from a

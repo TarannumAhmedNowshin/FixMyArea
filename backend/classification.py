@@ -1,94 +1,140 @@
-"""Closed-set photo classification using the OpenAI Responses API."""
+"""Local zero-shot image classification with Hugging Face CLIP."""
 
 from __future__ import annotations
 
-import base64
-import json
+import io
 import os
+from pathlib import Path
+from threading import Lock
+
+from PIL import Image, UnidentifiedImageError
 
 
 class ClassificationError(RuntimeError):
     """A safe, user-displayable classification failure."""
 
 
-SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "category": {
-            "type": "string",
-            "enum": ["street_light", "illegal_dumping", "electronic_waste", "other"],
-        },
-        "label": {"type": "string"},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "visible_evidence": {"type": "string"},
-        "needs_more_information": {"type": "boolean"},
-    },
-    "required": [
-        "category",
-        "label",
-        "confidence",
-        "visible_evidence",
-        "needs_more_information",
-    ],
+MODEL_ID = os.environ.get("HF_IMAGE_MODEL", "openai/clip-vit-base-patch32")
+CATEGORY_PROMPTS = {
+    "street_light": "a broken street light that is not working on a public street at night",
+    "illegal_dumping": "a pile of illegally dumped rubbish and trash bags on a roadside",
+    "electronic_waste": "a broken laptop computer with a cracked screen that has been thrown away",
+    "other": "a normal photo of a landscape, pets, or food, with no damaged infrastructure, litter, or electronic waste",
 }
+CATEGORY_LABELS = {
+    "street_light": "Possible damaged or non-working streetlight",
+    "illegal_dumping": "Possible rubbish dumped in a public place",
+    "electronic_waste": "Possible discarded electrical or electronic equipment",
+    "other": "Other issue or unclear photo",
+}
+
+_MODEL = None
+_PROCESSOR = None
+_MODEL_LOCK = Lock()
+_INFERENCE_LOCK = Lock()
+
+
+def _load_model():
+    global _MODEL, _PROCESSOR
+    if _MODEL is None or _PROCESSOR is None:
+        with _MODEL_LOCK:
+            if _MODEL is None or _PROCESSOR is None:
+                try:
+                    from huggingface_hub.constants import HF_HUB_CACHE
+                    from transformers import CLIPConfig, CLIPModel, CLIPProcessor
+
+                    cache_name = f"models--{MODEL_ID.replace('/', '--')}"
+                    snapshots = Path(HF_HUB_CACHE) / cache_name / "snapshots"
+                    cached_weights = sorted(snapshots.glob("*/model.safetensors"))
+                    cached_processors = sorted(snapshots.glob("*/preprocessor_config.json"))
+
+                    if cached_processors:
+                        processor_path = max(cached_processors, key=lambda path: path.stat().st_mtime).parent
+                        _PROCESSOR = CLIPProcessor.from_pretrained(
+                            str(processor_path), local_files_only=True
+                        )
+                    else:
+                        processor_path = None
+                        _PROCESSOR = CLIPProcessor.from_pretrained(MODEL_ID)
+
+                    # Transformers 4.x may query the Hub on each cold start to
+                    # discover its converted safetensors PR, even after caching
+                    # the weights. Load an already-cached checkpoint by path so
+                    # subsequent startups work without network access.
+                    if cached_weights:
+                        weight_path = max(cached_weights, key=lambda path: path.stat().st_mtime)
+                        config_source = str(processor_path) if processor_path else MODEL_ID
+                        config = CLIPConfig.from_pretrained(config_source, local_files_only=True)
+                        _MODEL = CLIPModel.from_pretrained(
+                            str(weight_path.parent),
+                            config=config,
+                            use_safetensors=True,
+                            local_files_only=True,
+                        )
+                    else:
+                        _MODEL = CLIPModel.from_pretrained(MODEL_ID, use_safetensors=True)
+                    _MODEL.eval()
+                except Exception:
+                    _MODEL = None
+                    _PROCESSOR = None
+                    raise
+    return _MODEL, _PROCESSOR
 
 
 def classify_image(image: bytes, media_type: str, description: str = "") -> dict:
-    """Return structured classification; never choose a service or authority."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise ClassificationError(
-            "OPENAI_API_KEY is not configured. Add it to the project .env file and restart the backend."
-        )
+    """Find the closest supported image-text match using the local CLIP model."""
+    try:
+        with Image.open(io.BytesIO(image)) as opened_image:
+            photo = opened_image.convert("RGB")
+    except (UnidentifiedImageError, OSError):
+        raise ClassificationError("The selected image could not be decoded. Choose another photo.") from None
 
     try:
-        from openai import OpenAI, OpenAIError
-    except ImportError:
-        raise ClassificationError("The OpenAI SDK is missing. Install backend/requirements.txt and restart.") from None
-
-    try:
-        client = OpenAI()
-        data_url = f"data:{media_type};base64,{base64.b64encode(image).decode('ascii')}"
-        user_content = [
-            {
-                "type": "input_text",
-                "text": (
-                    "Classify the main civic issue visible in this photo. Choose exactly one category: "
-                    "street_light for a damaged or non-working public streetlight; illegal_dumping for "
-                    "rubbish abandoned in a public place; electronic_waste for discarded electrical "
-                    "or electronic equipment; other if none clearly fits. Use only visible evidence. "
-                    "Do not infer location, authority, cause, or a reporting service. If uncertain, use other "
-                    "and set needs_more_information to true."
-                    + (f" Citizen note: {description.strip()}" if description.strip() else "")
-                ),
-            },
-            {"type": "input_image", "image_url": data_url, "detail": "auto"},
-        ]
-        response = client.responses.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"),
-            input=[{"role": "user", "content": user_content}],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "issue_classification",
-                    "strict": True,
-                    "schema": SCHEMA,
-                }
-            },
-            max_output_tokens=180,
-        )
-        if not response.output_text:
-            raise ClassificationError("The model did not return a classification. Try another photo.")
-        result = json.loads(response.output_text)
-        if result.get("category") not in {"street_light", "illegal_dumping", "electronic_waste", "other"}:
-            raise ClassificationError("The model returned an unsupported issue category.")
-        return result
-    except ClassificationError:
-        raise
-    except OpenAIError:
-        # Keep credentials and provider request details out of responses and logs.
-        raise ClassificationError("Image analysis failed. Check API billing and key access, then try again.") from None
-    except (ValueError, TypeError):
-        raise ClassificationError("Image analysis returned an unreadable result. Try again.") from None
+        from torch import inference_mode
+        model, processor = _load_model()
     except Exception:
-        raise ClassificationError("Image analysis is temporarily unavailable. Try again shortly.") from None
+        raise ClassificationError(
+            f"The local Hugging Face model '{MODEL_ID}' could not be loaded. Check the internet connection for its first download, then restart the backend."
+        ) from None
+
+    try:
+        note = " ".join(description.split())[:200]
+        def score_prompts(prompts: list[str]) -> list[float]:
+            inputs = dict(processor.tokenizer(prompts, return_tensors="pt", padding=True))
+            inputs.update(processor.image_processor(photo, return_tensors="pt"))
+            with _INFERENCE_LOCK, inference_mode():
+                return model(**inputs).logits_per_image.softmax(dim=1)[0].tolist()
+
+        category_keys = list(CATEGORY_PROMPTS)
+        probabilities = score_prompts(list(CATEGORY_PROMPTS.values()))
+        best_index = max(range(len(probabilities)), key=probabilities.__getitem__)
+        ranked = sorted(probabilities, reverse=True)
+        clear_match = probabilities[best_index] >= 0.35 and probabilities[best_index] - ranked[1] >= 0.08
+
+        # Let notes help when the photo alone is ambiguous, but do not allow a
+        # short or conflicting note to overturn a clear visual match.
+        if note and (not clear_match or category_keys[best_index] == "other"):
+            noted_scores = score_prompts([
+                f"{prompt}. The reporter notes: {note}"
+                for prompt in CATEGORY_PROMPTS.values()
+            ])
+            noted_best = max(range(len(noted_scores)), key=noted_scores.__getitem__)
+            noted_ranked = sorted(noted_scores, reverse=True)
+            if noted_best != category_keys.index("other") and noted_scores[noted_best] >= 0.35 and noted_scores[noted_best] - noted_ranked[1] >= 0.08:
+                probabilities = noted_scores
+    except Exception:
+        raise ClassificationError("Local image analysis failed. Check the image and restart the backend.") from None
+
+    best_index = max(range(len(probabilities)), key=probabilities.__getitem__)
+    ranked = sorted(probabilities, reverse=True)
+    top_score = float(probabilities[best_index])
+    clear_match = top_score >= 0.35 and (len(ranked) == 1 or top_score - ranked[1] >= 0.08)
+    category = category_keys[best_index] if clear_match else "other"
+    matched_label = CATEGORY_LABELS[category_keys[best_index]]
+    return {
+        "category": category,
+        "label": CATEGORY_LABELS[category],
+        "confidence": top_score,
+        "visible_evidence": f"Best local image-text match: {matched_label.lower()} (relative score {top_score:.2f}).",
+        "needs_more_information": not clear_match or category == "other",
+    }
