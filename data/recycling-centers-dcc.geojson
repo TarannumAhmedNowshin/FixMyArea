@@ -1,0 +1,10 @@
+{
+"type": "FeatureCollection",
+"name": "infile",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "Name": "Ballymun Recycling Centre", "Address": "Carton Way, Dublin 11", "Eircode": "D11 XH7P", "Telephone": "01222 2222", "Email": "waste.management@dublincity.ie" }, "geometry": { "type": "Point", "coordinates": [ -6.277193, 53.405735 ] } },
+{ "type": "Feature", "properties": { "Name": "North Strand Recycling Centre", "Address": "Shamrock Terrace, North Strand, Dublin 11", "Eircode": "D01C1F1", "Telephone": "18364716", "Email": "waste.management@dublincity.ie" }, "geometry": { "type": "Point", "coordinates": [ -6.24435, 53.355 ] } },
+{ "type": "Feature", "properties": { "Name": "Ringsend Recycling Centre", "Address": "Pigeon House Road, Ringsend, Dublin 4", "Eircode": "D04RF79", "Telephone": "16144750", "Email": "waste.management@dublincity.ie" }, "geometry": { "type": "Point", "coordinates": [ -6.21433, 53.34177 ] } }
+]
+}

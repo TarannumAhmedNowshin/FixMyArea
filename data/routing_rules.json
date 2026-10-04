@@ -1,0 +1,26 @@
+{
+  "street_light": {
+    "next_action": "report",
+    "destination": {
+      "name": "Report a streetlight fault",
+      "official_url": "https://www.dublincity.ie/public-realm-and-road-maintenance/maintaining-street-lights-dublin-city/report-street-light-faults-or-emergencies"
+    },
+    "guidance": "Include the road name, light pole number if visible, and the nearest house number."
+  },
+  "illegal_dumping": {
+    "next_action": "report",
+    "destination": {
+      "name": "Report illegal dumping to Dublin City Council",
+      "official_url": "https://citizenhub.dublincity.ie/service/Illegal_Dumping"
+    },
+    "guidance": "Add the location and attach the photo when completing the council form."
+  },
+  "electronic_waste": {
+    "next_action": "recycle",
+    "destination": {
+      "name": "Dublin City Council WEEE recycling information",
+      "official_url": "https://www.dublincity.ie/waste-and-recycling/find-out-about-recycling/electrical-and-electronic-recycling"
+    },
+    "guidance": "DCC states that household electrical and electronic equipment is accepted free at its recycling centres. Check current hours before travelling."
+  }
+}
