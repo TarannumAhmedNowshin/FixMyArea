@@ -1,74 +1,116 @@
-import geopandas as gpd
-from shapely.geometry import Point
+import requests
 
 
-AUTHORITY_GEOJSON_URL = (
-    "https://data-osi.opendata.arcgis.com/api/download/v1/items/"
-    "74b839e09e1c48f2b2fe4efccb52a73d/"
-    "geojson?layers=3"
+# Official Tailte Éireann ArcGIS item
+ITEM_ID = "74b839e09e1c48f2b2fe4efccb52a73d"
+
+# Local Authorities layer inside the ArcGIS service
+SUBLAYER_ID = 3
+
+# ArcGIS item metadata endpoint
+ITEM_INFO_URL = (
+    f"https://www.arcgis.com/sharing/rest/content/items/"
+    f"{ITEM_ID}?f=json"
 )
 
 
-_authorities = None
+def _get_layer_url():
+    """
+    Get the current ArcGIS FeatureServer URL
+    from the official Tailte Éireann item.
+    """
 
+    response = requests.get(
+        ITEM_INFO_URL,
+        timeout=10
+    )
 
-def _load_authorities():
-    global _authorities
+    response.raise_for_status()
 
-    if _authorities is None:
-        print("Loading Local Authority boundaries...")
+    item = response.json()
 
-        _authorities = gpd.read_file(
-            AUTHORITY_GEOJSON_URL
+    service_url = item.get("url")
+
+    if not service_url:
+        raise RuntimeError(
+            "Could not find the Local Authority service URL."
         )
 
-        if _authorities.crs is None:
-            _authorities = _authorities.set_crs(
-                "EPSG:4326"
-            )
-
-        _authorities = _authorities.to_crs(
-            "EPSG:4326"
-        )
-
-    return _authorities
+    return f"{service_url}/{SUBLAYER_ID}"
 
 
 def find_local_authority(lat, lon):
     """
-    Find the Irish local authority containing
-    the supplied GPS coordinates.
+    Find the Irish local authority responsible
+    for a given GPS coordinate.
+
+    Example:
+        find_local_authority(53.3498, -6.2603)
+
+    Returns:
+        {
+            "found": True,
+            "authority": "Dublin City Council",
+            "authority_ga": "Comhairle Cathrach Bhaile Átha Cliath"
+        }
     """
 
-    authorities = _load_authorities()
+    layer_url = _get_layer_url()
 
-    # Shapely expects longitude first
-    user_location = Point(lon, lat)
+    query_url = f"{layer_url}/query"
 
-    match = authorities[
-        authorities.geometry.intersects(
-            user_location
+    params = {
+        "f": "json",
+
+        # ArcGIS expects longitude,latitude
+        "geometry": f"{lon},{lat}",
+
+        "geometryType": "esriGeometryPoint",
+
+        # WGS84 / standard GPS coordinates
+        "inSR": "4326",
+
+        # Find the authority polygon containing the point
+        "spatialRel": "esriSpatialRelIntersects",
+
+        # Only request fields FixMyArea needs
+        "outFields": "ENG_NAME_VALUE,GLE_NAME_VALUE",
+
+        # Geometry isn't needed in the response
+        "returnGeometry": "false",
+    }
+
+    response = requests.get(
+        query_url,
+        params=params,
+        timeout=10
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    # ArcGIS may return HTTP 200 even when
+    # the query itself contains an error.
+    if "error" in data:
+        raise RuntimeError(
+            f"Authority API error: {data['error']}"
         )
-    ]
 
-    if match.empty:
+    features = data.get("features", [])
+
+    # No authority found for supplied coordinates
+    if not features:
         return {
             "found": False,
-            "authority": None
+            "authority": None,
+            "authority_ga": None
         }
 
-    row = match.iloc[0]
-
-    attributes = {}
-
-    for column in authorities.columns:
-
-        if column != "geometry":
-            attributes[column] = str(
-                row[column]
-            )
+    attributes = features[0]["attributes"]
 
     return {
         "found": True,
-        "attributes": attributes
+        "authority": attributes.get("ENG_NAME_VALUE"),
+        "authority_ga": attributes.get("GLE_NAME_VALUE")
     }
